@@ -1,0 +1,51 @@
+Task 1:
+https://databricks-prod-cloudfront.cloud.databricks.com/public/4027ec902e239c93eaaa8714f173bcfc/2624048041000361/3157042987386388/3883496405417308/latest.html
+
+----------------------------------------------------------------------------------------------------------------------
+
+# Load dataset into a DataFrame
+customer_df = spark.read.csv('/FileStore/tables/customer_dataset.csv', header=True, inferSchema=True)
+customer_df.show()
+
+---------------------------------------------------------------------------------------------------------
+
+from pyspark.sql.functions import col, count
+
+# group by name and address and count occurences
+duplicates_df = customer_df.groupBy("Name", "Address").count().filter(col("count") > 1)
+duplicates_df.show()
+
+---------------------------------------------------------------------------------------------------------
+
+from pyspark.sql.functions import col, concat_ws, row_number, monotonically_increasing_id
+from pyspark.sql import Window
+
+# Initialize Spark session (if not already initialized), some website mention its automatically created when we open a notebook
+spark = SparkSession.builder \
+    .appName("CustomerDeduplication") \
+    .getOrCreate()
+
+# Load dataset into a DataFrame
+customer_df = spark.read.csv('/FileStore/tables/customer_dataset.csv', header=True, inferSchema=True)
+
+# Replace null values if any in Name and Address columns with empty strings
+customer_df = customer_df.fillna({'Name': '', 'Address': ''})
+
+# Create a CompositeKey column by concatenating Name and Address
+customer_df_modified = customer_df.withColumn("CompositeKey", concat_ws(' ', col("Name"), col("Address")))
+print("Added Composite key :")
+customer_df_modified.show()
+
+# Use dense_rank to assign the same MasterID to duplicates
+windowSpec = Window.partitionBy("CompositeKey").orderBy(monotonically_increasing_id())
+master_id_df = customer_df_modified.withColumn("MasterID", row_number().over(windowSpec))
+
+
+print("Below are 2 variations of outputs with Master ID columns : ")
+# Select relevant columns
+result_df = master_id_df.select("CustomerID", "Name", "Address", "MasterID")
+result_df.show()
+
+# Merge the MasterID back into the original dataset
+merged_df = customer_df_modified.join(result_df.select("CustomerID", "MasterID"), on="CustomerID", how="left")
+merged_df.show()
